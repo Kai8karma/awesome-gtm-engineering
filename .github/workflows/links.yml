@@ -1,0 +1,66 @@
+name: Links
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays. Repos get renamed, archived and deleted; this is how the list
+    # finds out. GitHub pauses schedules after 60 days without a commit, so
+    # a merged pull request now and then keeps it alive.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lychee:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check every link in the list
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --no-progress
+            --max-concurrency 4
+            --max-retries 3
+            --accept 200,206,429
+            README.md CONTRIBUTING.md
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Every entry has the agreed shape and no star counts
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          entry = re.compile(r"^- \*{0,2}\[[^\]]+\]\(https://[^)]+\)\*{0,2}( `[^`]+`)? — \S.*$")
+          bad = []
+          section = ""
+          for number, line in enumerate(open("README.md", encoding="utf-8"), 1):
+              line = line.rstrip("\n")
+              if line.startswith("## "):
+                  section = line[3:]
+              if section in ("Contents", "Why this list", "License", ""):
+                  continue
+              if line.startswith("- "):
+                  if not entry.match(line):
+                      bad.append(f"{number}: not '- [Name](url) `LICENCE` — description': {line[:80]}")
+                  if "★" in line:
+                      bad.append(f"{number}: star count: {line[:80]}")
+          print("\n".join(bad) or "all entries well-formed")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: No repository is listed twice
+        run: |
+          dupes=$(grep -oE 'https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' README.md | tr '[:upper:]' '[:lower:]' | sort | uniq -d)
+          if [ -n "$dupes" ]; then echo "listed more than once:"; echo "$dupes"; exit 1; fi
